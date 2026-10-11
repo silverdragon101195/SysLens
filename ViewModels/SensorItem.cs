@@ -40,7 +40,7 @@ public sealed class SensorItem(string key, string name, SensorKind kind) : Monit
     /// <summary>Raised when the user shows or hides the sensor, but not by <see cref="SetShown"/>.</summary>
     public event Action<SensorItem>? ShownChanged;
 
-    public string Key { get; } = key;
+    public override string Key { get; } = key;
 
     public SensorKind Kind { get; } = kind;
 

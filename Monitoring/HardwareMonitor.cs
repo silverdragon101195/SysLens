@@ -2,13 +2,14 @@ using System.Diagnostics;
 using System.Net.NetworkInformation;
 using LibreHardwareMonitor.Hardware;
 using SysLens.Native;
+using Drive = LibreHardwareMonitor.Hardware.Storage.StorageDevice;
 
 namespace SysLens.Monitoring;
 
 /// <summary>
-/// Reads every sensor LibreHardwareMonitor finds, plus RAM use and the RTSS frame rate, and raises
-/// <see cref="Updated"/> once per <see cref="Interval"/>. LibreHardwareMonitor is opened, updated and closed on one
-/// background thread only; it is not thread-safe.
+/// Reads every sensor LibreHardwareMonitor finds, plus RAM use, each disk's activity and the RTSS frame rate, and
+/// raises <see cref="Updated"/> once per <see cref="Interval"/>. LibreHardwareMonitor is opened, updated and closed on
+/// one background thread only; it is not thread-safe.
 /// </summary>
 public sealed class HardwareMonitor : IDisposable
 {
@@ -84,6 +85,7 @@ public sealed class HardwareMonitor : IDisposable
     private void Run()
     {
         using var rtss = new RtssReader();
+        var disks = new DiskReader();
         Computer? computer = null;
         MonitorLayout? layout = null;
         RtssFrame? frame = null;
@@ -117,12 +119,13 @@ public sealed class HardwareMonitor : IDisposable
                     Update(hardware);
                 frame = rtss.Read();
                 memory = MemoryStatus.Read();
+                var lettersChanged = disks.Read();
 
-                if (layout is null || _layoutChanged || rtss.IsAvailable != hasFrameRate)
+                if (layout is null || _layoutChanged || lettersChanged || rtss.IsAvailable != hasFrameRate)
                 {
                     _layoutChanged = false;
                     hasFrameRate = rtss.IsAvailable;
-                    layout = BuildLayout(computer, hasFrameRate, () => frame, () => memory);
+                    layout = BuildLayout(computer, disks, hasFrameRate, () => frame, () => memory);
                 }
                 Updated?.Invoke(new MonitorSnapshot(layout, layout.Read(), frame?.App, DateTime.Now));
 
@@ -196,79 +199,48 @@ public sealed class HardwareMonitor : IDisposable
         }
     }
 
-    private static MonitorLayout BuildLayout(Computer computer, bool hasFrameRate, Func<RtssFrame?> frame, Func<MemoryUsage?> memory)
+    private static MonitorLayout BuildLayout(Computer computer, DiskReader disks, bool hasFrameRate, Func<RtssFrame?> frame,
+        Func<MemoryUsage?> memory)
     {
-        var sensors = new List<SensorInfo>();
-        var readers = new List<Func<float?>>();
-        var keys = new HashSet<string>();
+        var layout = new LayoutBuilder();
         var upInterfaces = UpNetworkInterfaces();
-
-        // LibreHardwareMonitor gives some sensors the same identifier, such as two voltages of one graphics card.
-        string UniqueKey(string key)
-        {
-            var unique = key;
-            for (var n = 2; !keys.Add(unique); n++)
-                unique = $"{key}#{n}";
-            return unique;
-        }
 
         HardwareInfo? Describe(IHardware hardware)
         {
-            if (!TryMap(hardware.HardwareType, out HardwareKind kind)
+            if (!LayoutBuilder.TryMap(hardware.HardwareType, out HardwareKind kind)
                 || (kind == HardwareKind.Network && !upInterfaces.Contains(InterfaceId(hardware))))
                 return null;
 
             var key = hardware.Identifier.ToString();
             var own = new List<SensorInfo>();
-            void Add(string sensorKey, string name, SensorKind sensorKind, Func<float?> read)
-            {
-                var info = new SensorInfo(UniqueKey(sensorKey), name, sensorKind);
-                own.Add(info);
-                sensors.Add(info);
-                readers.Add(read);
-            }
-
             if (kind == HardwareKind.Cpu)
             {
                 var cores = hardware.Sensors.Where(s => s.SensorType == SensorType.Clock && s.Name != "Bus Speed").ToList();
                 if (cores.Count > 1)
                 {
-                    Add($"{key}/clock/max", CoreMaxName, SensorKind.Clock, () => cores.Max(s => s.Value));
-                    Add($"{key}/clock/average", CoreAverageName, SensorKind.Clock, () => cores.Average(s => s.Value));
+                    own.Add(layout.Add($"{key}/clock/max", CoreMaxName, SensorKind.Clock, () => cores.Max(s => s.Value)));
+                    own.Add(layout.Add($"{key}/clock/average", CoreAverageName, SensorKind.Clock, () => cores.Average(s => s.Value)));
                 }
             }
-
-            foreach (var sensor in hardware.Sensors)
-            {
-                if (!TryMap(sensor.SensorType, out SensorKind sensorKind))
-                    continue;
-                // SysLens keeps its own history; LibreHardwareMonitor's would grow for a day.
-                sensor.ValuesTimeWindow = TimeSpan.Zero;
-                Add(sensor.Identifier.ToString(), sensor.Name, sensorKind, () => sensor.Value);
-            }
+            own.AddRange(layout.Add(hardware.Sensors));
 
             // A device with nothing to read, such as a motherboard while PawnIO is missing, is left out.
             List<HardwareInfo> subHardware = [.. hardware.SubHardware.Select(Describe).OfType<HardwareInfo>()];
             return own.Count > 0 || subHardware.Count > 0 ? new HardwareInfo(key, hardware.Name, kind, own, subHardware) : null;
         }
 
-        var hardware = computer.Hardware.Select(Describe).OfType<HardwareInfo>().ToList();
+        var hardware = computer.Hardware.Where(h => h is not Drive).Select(Describe).OfType<HardwareInfo>().ToList();
+        hardware.AddRange(disks.Describe(layout, [.. computer.Hardware.OfType<Drive>()]));
 
         // RAM use, under the keys LibreHardwareMonitor gives these sensors.
-        HardwareInfo MemoryHardware(string key, string name, int loadIndex, int dataIndex, Func<(ulong Total, ulong Available)?> read)
-        {
-            var load = new SensorInfo(UniqueKey($"{key}/load/{loadIndex}"), "Memory", SensorKind.Load);
-            var used = new SensorInfo(UniqueKey($"{key}/data/{dataIndex}"), "Memory Used", SensorKind.Data);
-            var available = new SensorInfo(UniqueKey($"{key}/data/{dataIndex + 1}"), "Memory Available", SensorKind.Data);
-            sensors.AddRange([load, used, available]);
-            readers.AddRange(
+        HardwareInfo MemoryHardware(string key, string name, int loadIndex, int dataIndex, Func<(ulong Total, ulong Available)?> read) =>
+            new(key, name, HardwareKind.Memory,
             [
-                () => read() is { Total: > 0 } r ? 100f * (r.Total - r.Available) / r.Total : null,
-                () => read() is { } r ? r.Total - r.Available : null,
-                () => read() is { } r ? r.Available : null,
-            ]);
-            return new HardwareInfo(key, name, HardwareKind.Memory, [load, used, available], []);
-        }
+                layout.Add($"{key}/load/{loadIndex}", "Memory", SensorKind.Load,
+                    () => read() is { Total: > 0 } r ? 100f * (r.Total - r.Available) / r.Total : null),
+                layout.Add($"{key}/data/{dataIndex}", "Memory Used", SensorKind.Data, () => read() is { } r ? r.Total - r.Available : null),
+                layout.Add($"{key}/data/{dataIndex + 1}", "Memory Available", SensorKind.Data, () => read() is { } r ? r.Available : null),
+            ], []);
 
         hardware.Add(MemoryHardware("/ram", "Total Memory", 0, 0,
             () => memory() is { } m ? (m.PhysicalTotal, m.PhysicalAvailable) : null));
@@ -277,18 +249,15 @@ public sealed class HardwareMonitor : IDisposable
 
         if (hasFrameRate)
         {
-            var rate = new SensorInfo(UniqueKey($"{FrameRateKey}/framerate"), "Framerate", SensorKind.Framerate);
-            var time = new SensorInfo(UniqueKey($"{FrameRateKey}/frametime"), "Frametime", SensorKind.Frametime);
-            sensors.AddRange([rate, time]);
-            readers.AddRange([() => frame()?.Framerate, () => frame()?.FrametimeMs]);
-            hardware.Add(new HardwareInfo(FrameRateKey, "RivaTuner Statistics Server", HardwareKind.FrameRate, [rate, time], []));
+            hardware.Add(new HardwareInfo(FrameRateKey, "RivaTuner Statistics Server", HardwareKind.FrameRate,
+            [
+                layout.Add($"{FrameRateKey}/framerate", "Framerate", SensorKind.Framerate, () => frame()?.Framerate),
+                layout.Add($"{FrameRateKey}/frametime", "Frametime", SensorKind.Frametime, () => frame()?.FrametimeMs),
+            ], []));
         }
 
-        return new MonitorLayout([.. hardware.OrderBy(h => Array.IndexOf(DisplayOrder, h.Kind))], sensors, [.. readers]);
+        return layout.Build([.. hardware.OrderBy(h => Array.IndexOf(DisplayOrder, h.Kind))]);
     }
-
-    private static bool TryMap<T>(Enum value, out T mapped) where T : struct, Enum =>
-        Enum.TryParse(value.ToString(), out mapped) && Enum.IsDefined(mapped);
 
     /// <summary>
     /// Adapters that carry traffic: up, with an IP address. Windows also reports as up every filter driver's binding

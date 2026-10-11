@@ -12,8 +12,15 @@ file, device or hub you point it at.
 
 - **Every sensor** – CPU, graphics cards, motherboard, drives, network adapters, fan controllers, power supplies
   and batteries through LibreHardwareMonitor, plus RAM use, listed by device and kind with their live values and a
-  search. Network adapters are listed while they are up and have an address. Memory modules' own temperature
+  search. The tree starts closed and the rows you open stay open; a search opens the rows holding a match until it
+  is cleared. Network adapters are listed while they are up and have an address. Memory modules' own temperature
   sensors are not read: they are reached over SMBus, which RGB memory controllers hold for long stretches.
+- **Drives** – one per disk Windows numbers, as Task Manager lists them, named with its drive letters
+  (Samsung SSD 970 EVO Plus 2TB (C: D:)) and in drive letter order. Active time, read speed and write speed come
+  from the counters Windows keeps for Task Manager, so drives behind Intel RST and RAID volumes have them too. A
+  RAID volume holds the drives it is made of when the RAID driver reports them through CSMI, as Intel RST does: a
+  SATA drive is named with its controller port, and an NVMe drive, which Windows does not list, is read through
+  Intel RST's NVMe pass-through. Without CSMI those drives are listed on their own.
 - **Frame rate** – the frame rate and frame time RivaTuner Statistics Server measures for the 3D application it
   last saw in front, or for the busiest one while SysLens is in front. SysLens reads them from RTSS's shared
   memory; it injects nothing into games.
@@ -22,8 +29,9 @@ file, device or hub you point it at.
   the lowest, average and highest reading, and shows the reading under the pointer. Lines are coloured by height:
   violet at the bottom of the axis through blue, green and yellow to red at the top. **Clear history** empties
   them.
-- **Saved layout** – the graphs shown and their order are written to `SysLens.settings.json` next to
-  `SysLens.exe` on every change, and nowhere else. `publish.bat` keeps that file when it rebuilds `publish`.
+- **Saved layout** – the graphs shown and their order, and the rows of the tree you opened, are written to
+  `SysLens.settings.json` next to `SysLens.exe` on every change, and nowhere else. `publish.bat` keeps that file
+  when it rebuilds `publish`.
 - **Defaults** – sensors you have not ticked or cleared follow an MSI Afterburner on-screen display: CPU
   temperature, power, clock (the fastest core, Core Max) and usage; for each GPU its temperature, power, power
   percent, core and memory clocks, usage and memory used; RAM used; frame rate and frame time. **Reset to
@@ -84,7 +92,8 @@ it, whether it can be deleted and how to remove it safely. For a USB device or h
 its place in the hub chain or its status is a problem, and how to fix it. Answers stream in as Markdown
 and you can keep the conversation going.
 
-Dark theme with a dark title bar throughout.
+Dark theme with a dark title bar throughout. Panes resized with a splitter, on any tab, keep their size from one
+run to the next: it is written to `SysLens.settings.json` with the graphs.
 
 ## Requirements
 
@@ -127,17 +136,17 @@ needs it.
 
 ## Project layout
 
-| Folder        | Contents                                                                                                     |
-| ------------- | ------------------------------------------------------------------------------------------------------------ |
-| `Scanning/`   | Parallel directory walker and the size tree it builds                                                        |
-| `Usb/`        | USB device record and Device Manager problem codes                                                           |
-| `Monitoring/` | Sensor reader over LibreHardwareMonitor, RTSS frame rate reader, default sensors, saved choices, PawnIO      |
-| `ViewModels/` | MVVM view models for drives, results, the USB tree, RGB devices, the sensor tree and graphs, and the AI chat |
-| `Views/`      | Hardware Monitor tab, sensor graph, AI assistant panel, colour picker, the Markdown renderer and converters  |
-| `Lighting/`   | Effect renderer and render loop, the ASUS Aura host process and its client, Dynamic Lighting devices         |
-| `Ai/`         | Config loader, streaming chat client and prompts                                                             |
-| `Native/`     | Win32 interop: elevation, backup privilege, dark title bar, signing root CA, USB enumeration, device changes |
-| `Themes/`     | Dark theme resources                                                                                         |
+| Folder        | Contents                                                                                                                                            |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Scanning/`   | Parallel directory walker and the size tree it builds                                                                                               |
+| `Usb/`        | USB device record and Device Manager problem codes                                                                                                  |
+| `Monitoring/` | Sensor reader over LibreHardwareMonitor, disks with their activity and RAID members, RTSS frame rate reader, default sensors, saved choices, PawnIO |
+| `ViewModels/` | MVVM view models for drives, results, the USB tree, RGB devices, the sensor tree and graphs, and the AI chat                                        |
+| `Views/`      | Hardware Monitor tab, sensor graph, AI assistant panel, colour picker, the Markdown renderer, converters and pane sizes                             |
+| `Lighting/`   | Effect renderer and render loop, the ASUS Aura host process and its client, Dynamic Lighting devices                                                |
+| `Ai/`         | Config loader, streaming chat client and prompts                                                                                                    |
+| `Native/`     | Win32 interop: elevation, backup privilege, dark title bar, signing root CA, USB enumeration, device changes, disks and their RAID volumes          |
+| `Themes/`     | Dark theme resources                                                                                                                                |
 
 ## Notes
 

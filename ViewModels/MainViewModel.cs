@@ -12,9 +12,11 @@ public sealed class MainViewModel : ObservableObject
     private string _status = "Tick the drives to analyse, then press Scan.";
     private bool _isScanning;
 
-    public MainViewModel(string privilegeStatus)
+    /// <param name="hasBackupPrivilege">Whether SysLens holds the backup privilege, which lets a scan read every folder.</param>
+    public MainViewModel(bool hasBackupPrivilege)
     {
-        PrivilegeStatus = privilegeStatus;
+        if (!hasBackupPrivilege)
+            _status = $"Backup privilege unavailable: some protected folders may be skipped. {_status}";
         RefreshDrives();
     }
 
@@ -22,8 +24,6 @@ public sealed class MainViewModel : ObservableObject
 
     /// <summary>One root row per scanned drive, ordered by drive letter.</summary>
     public ObservableCollection<FolderItem> Results { get; } = [];
-
-    public string PrivilegeStatus { get; }
 
     public AssistantViewModel Assistant { get; } = new();
 

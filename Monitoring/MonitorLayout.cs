@@ -21,8 +21,16 @@ public sealed class MonitorLayout(IReadOnlyList<HardwareInfo> hardware, IReadOnl
     /// <summary>Every sensor of every device, in the order of <see cref="MonitorSnapshot.Values"/>.</summary>
     public IReadOnlyList<SensorInfo> Sensors { get; } = sensors;
 
+    /// <summary>Whether <paramref name="other"/> lists the same devices by the same names, with the same sensors.</summary>
+    public bool IsSameTree(MonitorLayout other) =>
+        Sensors.Select(s => s.Key).SequenceEqual(other.Sensors.Select(s => s.Key))
+        && Devices(Hardware).SequenceEqual(Devices(other.Hardware));
+
     /// <summary>Reads each sensor's latest value; monitor thread only.</summary>
     internal float?[] Read() => [.. readers.Select(read => read())];
+
+    private static IEnumerable<(string Key, string Name)> Devices(IEnumerable<HardwareInfo> hardware) =>
+        hardware.SelectMany(h => Devices(h.SubHardware).Prepend((h.Key, h.Name)));
 }
 
 /// <param name="Values">One per <see cref="MonitorLayout.Sensors"/>; null where the sensor has no reading.</param>

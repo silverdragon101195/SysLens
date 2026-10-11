@@ -14,7 +14,8 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        _viewModel = new MainViewModel(DescribePrivileges());
+        // App.OnStartup only opens this window once the process is elevated, so it can hold the backup privilege.
+        _viewModel = new MainViewModel(Privileges.TryEnable(Privileges.Backup));
         DataContext = _viewModel;
         // The RGB tab is hidden, so RGB is not started: no Aura host process, and Dynamic Lighting devices are not
         // taken over while SysLens is in front.
@@ -37,12 +38,6 @@ public partial class MainWindow : Window
         DarkTitleBar.Apply(this);
         DeviceChanges.Watch(this, _viewModel.Usb.ScheduleRefresh);
     }
-
-    // App.OnStartup only opens this window once the process is elevated.
-    private static string DescribePrivileges() =>
-        Privileges.TryEnable(Privileges.Backup)
-            ? "Administrator · backup privilege enabled (protected folders are readable)"
-            : "Administrator · backup privilege unavailable: some protected folders may be skipped";
 
     private void Refresh_Click(object sender, RoutedEventArgs e) => _viewModel.RefreshDrives();
 

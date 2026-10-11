@@ -28,12 +28,7 @@
                     ToolTip="Show only the default sensors, those of an MSI Afterburner on-screen display, in their own order, and forget the graphs added, removed or moved here" />
             <Button DockPanel.Dock="Right" Content="Clear history" Padding="10,3" Margin="0,0,8,0" VerticalAlignment="Center"
                     Click="ClearHistory_Click" ToolTip="Empty the graphs and start min, average and max again" />
-            <StackPanel>
-                <TextBlock Text="{Binding Summary}" TextTrimming="CharacterEllipsis" />
-                <TextBlock FontSize="12" Margin="0,2,0,0" Foreground="{StaticResource TertiaryTextBrush}"
-                           TextTrimming="CharacterEllipsis"
-                           Text="Tick a sensor to graph it and drag a graph to move it; graphs hold the last five minutes. Frame rate and frame time come from RivaTuner Statistics Server while a 3D application runs." />
-            </StackPanel>
+            <TextBlock Text="{Binding Summary}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
         </DockPanel>
 
         <!-- Shown until the PawnIO driver is installed -->
@@ -128,7 +123,7 @@
                 </DockPanel>
             </Border>
 
-            <GridSplitter Grid.Column="1" HorizontalAlignment="Stretch" ResizeDirection="Columns" />
+            <GridSplitter Grid.Column="1" HorizontalAlignment="Stretch" ResizeDirection="Columns" views:PaneSizes.Key="HardwareMonitor" />
 
             <!-- Graphs -->
             <Grid Grid.Column="2">

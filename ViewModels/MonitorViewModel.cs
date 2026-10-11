@@ -11,7 +11,7 @@ namespace SysLens.ViewModels;
 public sealed class MonitorViewModel : ObservableObject, IDisposable
 {
     private readonly Dispatcher _dispatcher = Dispatcher.CurrentDispatcher;
-    private readonly MonitorSettings _settings = MonitorSettings.Load();
+    private readonly MonitorSettings _settings = AppSettings.Current.HardwareMonitor;
 
     // Kept when a device goes, so its sensors keep their history and choices if it comes back.
     private readonly Dictionary<string, SensorItem> _sensors = [];
@@ -180,10 +180,11 @@ public sealed class MonitorViewModel : ObservableObject, IDisposable
             return;
 
         // A new layout comes whenever devices may have changed, such as on any network address change; the tree,
-        // with its scroll position, is rebuilt only when the sensors did change.
+        // with its scroll position, is rebuilt only when the devices, their names (a disk's drive letters) or the
+        // sensors did change.
         if (snapshot.Layout != _layout)
         {
-            if (_layout is not null && snapshot.Layout.Sensors.Select(s => s.Key).SequenceEqual(_layout.Sensors.Select(s => s.Key)))
+            if (_layout is not null && snapshot.Layout.IsSameTree(_layout))
                 _layout = snapshot.Layout;
             else
                 BuildTree(snapshot.Layout);
@@ -206,13 +207,10 @@ public sealed class MonitorViewModel : ObservableObject, IDisposable
     private void BuildTree(MonitorLayout layout)
     {
         _layout = layout;
-        var collapsed = new HashSet<string>();
-        CollectCollapsed(Hardware, collapsed);
-
         var ordered = new List<SensorItem>();
         Hardware.Clear();
         foreach (var info in layout.Hardware)
-            Hardware.Add(BuildHardware(info, collapsed, ordered));
+            Hardware.Add(BuildHardware(info, ordered));
 
         _ordered = ordered;
         _frameRateItems = [.. ordered.Where(i => i.Kind is SensorKind.Framerate or SensorKind.Frametime)];
@@ -220,21 +218,35 @@ public sealed class MonitorViewModel : ObservableObject, IDisposable
         ApplyFilter();
     }
 
-    private HardwareItem BuildHardware(HardwareInfo info, HashSet<string> collapsed, List<SensorItem> ordered)
+    private HardwareItem BuildHardware(HardwareInfo info, List<SensorItem> ordered)
     {
         var children = new List<MonitorNode>();
-        foreach (var subHardware in info.SubHardware)
-            children.Add(BuildHardware(subHardware, collapsed, ordered));
-
         foreach (var group in info.Sensors.GroupBy(s => s.Kind).OrderBy(g => SensorFormat.SortOrder(g.Key)))
         {
             var items = group.Select(sensor => ItemFor(info, sensor)).ToList();
             ordered.AddRange(items);
-            var key = $"{info.Key}|{group.Key}";
-            children.Add(new SensorGroupItem(key, SensorFormat.GroupName(group.Key), items) { IsExpanded = !collapsed.Contains(key) });
+            children.Add(Track(new SensorGroupItem($"{info.Key}|{group.Key}", SensorFormat.GroupName(group.Key), items)));
         }
 
-        return new HardwareItem(info, GlyphOf(info.Kind), children) { IsExpanded = !collapsed.Contains(info.Key) };
+        // The devices it contains follow its own sensors: a RAID volume shows its activity before its drives.
+        foreach (var subHardware in info.SubHardware)
+            children.Add(BuildHardware(subHardware, ordered));
+
+        return Track(new HardwareItem(info, GlyphOf(info.Kind), children));
+    }
+
+    /// <summary>Opens the row if the user left it open, and saves the user opening or closing it.</summary>
+    private T Track<T>(T node) where T : MonitorNode
+    {
+        node.SetExpanded(_settings.Expanded.Contains(node.Key));
+        node.ExpandedChanged += OnExpandedChanged;
+        return node;
+    }
+
+    private void OnExpandedChanged(MonitorNode node)
+    {
+        if (node.IsExpanded ? _settings.Expanded.Add(node.Key) : _settings.Expanded.Remove(node.Key))
+            SaveSettings();
     }
 
     private SensorItem ItemFor(HardwareInfo hardware, SensorInfo sensor)
@@ -281,8 +293,8 @@ public sealed class MonitorViewModel : ObservableObject, IDisposable
 
     private void SaveSettings()
     {
-        if (!_settings.Save())
-            Status = $"Could not write {MonitorSettings.FilePath}; the graphs stay as they are until SysLens closes.";
+        if (!AppSettings.Current.Save())
+            Status = $"Could not write {AppSettings.FilePath}; the graphs stay as they are until SysLens closes.";
     }
 
     /// <summary>
@@ -334,7 +346,7 @@ public sealed class MonitorViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>A sensor stays visible when its device, group and name together hold every word.</summary>
-    private static bool ApplyFilter(HardwareItem hardware, string path, string[] words)
+    private bool ApplyFilter(HardwareItem hardware, string path, string[] words)
     {
         path = $"{path} {hardware.Name}";
         var anyVisible = false;
@@ -362,30 +374,14 @@ public sealed class MonitorViewModel : ObservableObject, IDisposable
         return anyVisible;
     }
 
-    // A search opens the rows that hold a match.
-    private static void Reveal(MonitorNode node, bool visible, string[] words)
+    // A search opens the rows that hold a match; once it is cleared, every row is as the user left it.
+    private void Reveal(MonitorNode node, bool visible, string[] words)
     {
         node.IsVisible = visible;
-        if (visible && words.Length > 0)
-            node.IsExpanded = true;
-    }
-
-    private static void CollectCollapsed(IEnumerable<MonitorNode> nodes, HashSet<string> collapsed)
-    {
-        foreach (var node in nodes)
-        {
-            switch (node)
-            {
-                case HardwareItem hardware:
-                    if (!hardware.IsExpanded)
-                        collapsed.Add(hardware.Key);
-                    CollectCollapsed(hardware.Children, collapsed);
-                    break;
-                case SensorGroupItem { IsExpanded: false } group:
-                    collapsed.Add(group.Key);
-                    break;
-            }
-        }
+        if (words.Length == 0)
+            node.SetExpanded(_settings.Expanded.Contains(node.Key));
+        else if (visible)
+            node.SetExpanded(true);
     }
 
     /// <summary>Segoe Fluent Icons code points.</summary>
